@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>TU Zeiterfassung</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>Monat ausfüllen</h1>
+
+  <div class="month">
+    <button id="prev" type="button" aria-label="Vorheriger Monat" title="Vorheriger Monat (←)">‹</button>
+    <span id="monthLabel"></span>
+    <button id="next" type="button" aria-label="Nächster Monat" title="Nächster Monat (→)">›</button>
+  </div>
+
+  <div class="times">
+    <label>Beginn <input id="start" type="time" required></label>
+    <label>Ende <input id="end" type="time" required></label>
+  </div>
+
+  <p id="status" class="status" role="status"></p>
+
+  <details id="details" hidden>
+    <summary>Details</summary>
+    <ul id="dayList"></ul>
+  </details>
+
+  <button id="fill" type="button" class="primary" disabled>Eintragen</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>
