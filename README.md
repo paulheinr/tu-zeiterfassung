@@ -4,11 +4,19 @@ Eine kleine Browser-Erweiterung für Brave, Chrome und Edge. Sie trägt in „My
 
 ## Installation
 
-1. Den Ordner `tu-zeiterfassung` an einen festen Ort legen, zum Beispiel in den Home-Ordner. Der Browser lädt die Erweiterung immer von dort; der Ordner darf also nicht gelöscht werden.
-2. `brave://extensions` öffnen (in Chrome: `chrome://extensions`).
-3. Oben rechts den **Entwicklermodus** einschalten.
-4. Auf **Entpackte Erweiterung laden** klicken und den Ordner `tu-zeiterfassung` auswählen.
-5. Optional die Erweiterung über das Puzzle-Symbol in der Symbolleiste anheften.
+1. Auf [github.com/paulheinr/tu-zeiterfassung](https://github.com/paulheinr/tu-zeiterfassung) oben auf **Code → Download ZIP** klicken und die ZIP-Datei entpacken.
+   - Wer Git benutzt, kann stattdessen `git clone https://github.com/paulheinr/tu-zeiterfassung.git` ausführen.
+2. Den entpackten Ordner `tu-zeiterfassung-main` an einen festen Ort legen, zum Beispiel in den Home-Ordner. Der Browser lädt die Erweiterung immer von dort; der Ordner darf also nicht gelöscht werden.
+3. `brave://extensions` öffnen (in Chrome: `chrome://extensions`).
+4. Oben rechts den **Entwicklermodus** einschalten.
+5. Auf **Entpackte Erweiterung laden** klicken und den Ordner auswählen.
+6. Optional die Erweiterung über das Puzzle-Symbol in der Symbolleiste anheften.
+
+### Aktualisieren
+
+1. Die neue Version wie oben herunterladen und den alten Ordner damit ersetzen. Mit Git reicht `git pull`.
+2. In `brave://extensions` bei der Erweiterung auf den Neu-laden-Pfeil klicken.
+3. Den tuPort-Tab neu laden.
 
 ## Bedienung
 
@@ -40,3 +48,7 @@ Abweichende Zeiten und andere Abwesenheiten (z. B. Gleittage) am besten **vorher
 - Den **Monatsabschluss** macht die Erweiterung nicht. Den bitte wie gewohnt selbst durchführen, nachdem du alles geprüft hast.
 - Die Erweiterung läuft nur auf `*.sap.tu-berlin.de` und schickt keine Daten woandershin. Sie benutzt die angemeldete Sitzung der Zeiterfassung, wie wenn man selbst klickt.
 - Ändert die TU die App „My Time Tracking“, muss die Erweiterung eventuell angepasst werden.
+
+## Lizenz
+
+MIT, siehe [LICENSE](LICENSE).
