@@ -4,12 +4,13 @@
 (() => {
   "use strict";
 
-  const VERSION = "1.0.1";
+  const VERSION = "1.1.0";
   if (window.__tuZeit && window.__tuZeit.version === VERSION) return;
 
   const VIEW_NAME = "tub.ui5Timesheet.view.Main";
   const SATZA_ARRIVE = "01";
   const SATZA_LEAVE = "02";
+  const AWART_VACATION = "0200"; // ganztägig, ohne Auswirkung auf den Saldo (Urlaub/Krankheit)
   const AWART_PUBLIC_HOLIDAY = "0500";
   const DAY_MS = 864e5;
 
@@ -110,7 +111,15 @@
     );
   }
 
-  async function plan(year, month, start, end) {
+  // Löscht einen Eintrag sofort, wie deleteEntry() der App.
+  function removeEntity(model, path) {
+    return new Promise((resolve, reject) => model.remove(path, { success: () => resolve(), error: reject }));
+  }
+
+  const timeOf = (d) => d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+
+  // marks: { vacation: [ISO-Datum], delete: [ISO-Datum] } aus dem Kalender im Popup.
+  async function plan(year, month, start, end, marks = {}) {
     const ctrl = findController();
     if (!ctrl) return null;
 
@@ -139,47 +148,56 @@
     if (period.Approved) {
       return { ok: false, error: `${label} ist bereits abgeschlossen.` };
     }
+    // Wie in der App: Neue Einträge erst, wenn der Vormonat Einträge hat oder
+    // abgeschlossen ist. Löschen bleibt möglich.
     const prev = period.ToPrevious;
+    let warning = "";
     if (prev && !prev.EntrysExist && !prev.Approved) {
       const prevLabel = monthLabel(month === 1 ? year - 1 : year, month === 1 ? 12 : month - 1);
-      return { ok: false, error: `Der Vormonat ist noch leer. Bitte zuerst ${prevLabel} ausfüllen.` };
+      warning = `Der Vormonat ist noch leer. Bitte zuerst ${prevLabel} ausfüllen.`;
     }
 
     const dayData = await read(model, periodPath + "/PeriodToDay", { $expand: "DayToEntry" });
     const holidays = berlinHolidays(year);
     const today = localIsoDate(new Date());
+    const vacation = new Set(marks.vacation || []);
+    const remove = new Set(marks.delete || []);
 
     const days = dayData.results
-      .filter((d) => d.Sollz > 0)
+      .filter((d) => d.Sollz > 0 || d.DayToEntry.results.length || d.Awart)
       .map((d) => {
         const date = isoDate(d.Dats);
-        const day = { date, action: "fill", note: "" };
-        if (date > today) {
+        const entries = d.DayToEntry.results.slice().sort((a, b) => a.Timestamp - b.Timestamp);
+        const day = { date, action: "fill", note: "", path: "/" + model.getKey(d) };
+        if (entries.length || d.Awart) {
+          day.action = remove.has(date) ? "delete" : "existing";
+          day.note = [entries.map((e) => timeOf(e.Timestamp)).join("–"), d.Atext].filter(Boolean).join(", ");
+          day.entryPaths = entries.map((e) => "/" + model.getKey(e));
+          day.hasAwart = Boolean(d.Awart);
+        } else if (date > today) {
           day.action = "future";
-        } else if (d.DayToEntry.results.length) {
-          day.action = "existing";
-        } else if (d.Awart) {
-          day.action = "absence";
-          day.note = d.Atext;
+        } else if (warning) {
+          day.action = "blocked";
         } else if (date.endsWith("-12-24") || date.endsWith("-12-31")) {
           day.action = "manual";
           day.note = date.endsWith("-12-24") ? "Heiligabend" : "Silvester";
         } else if (holidays.has(date)) {
           day.action = "holiday";
           day.note = holidays.get(date);
-          day.path = "/" + model.getKey(d);
+        } else if (vacation.has(date)) {
+          day.action = "vacation";
         }
         return day;
       })
       .sort((a, b) => (a.date < b.date ? -1 : 1));
 
-    return { ok: true, label, days };
+    return { ok: true, label, warning, days };
   }
 
-  async function run(year, month, start, end) {
+  async function run(year, month, start, end, marks = {}) {
     if (state.running) return { ok: false, error: "Es wird bereits eingetragen." };
 
-    const p = await plan(year, month, start, end);
+    const p = await plan(year, month, start, end, marks);
     if (!p || !p.ok) return p;
 
     const ctrl = findController();
@@ -193,32 +211,60 @@
 
     const [startH, startM] = start.split(":").map(Number);
     const [endH, endM] = end.split(":").map(Number);
-    const todo = p.days.filter((d) => d.action === "fill" || d.action === "holiday");
+    const setAwart = (day, awart) => async () => {
+      model.setProperty(day.path + "/Awart", awart);
+      if (!awart) model.setProperty(day.path + "/Reason", "");
+      await submit(model);
+    };
+    // Das Backend erlaubt nur eine Änderung pro Speichern, also jede Änderung
+    // einzeln absenden (wie die App).
+    const stepsFor = (day, y, m, d) => {
+      switch (day.action) {
+        case "fill":
+          return [
+            async () => {
+              await ctrl.addEntry(SATZA_ARRIVE, new Date(y, m - 1, d, startH, startM));
+              await submit(model);
+            },
+            async () => {
+              await ctrl.addEntry(SATZA_LEAVE, new Date(y, m - 1, d, endH, endM));
+              await submit(model);
+            },
+          ];
+        case "holiday":
+          return [setAwart(day, AWART_PUBLIC_HOLIDAY)];
+        case "vacation":
+          return [setAwart(day, AWART_VACATION)];
+        case "delete":
+          return [
+            ...day.entryPaths.map((path) => () => removeEntity(model, path)),
+            ...(day.hasAwart ? [setAwart(day, "")] : []),
+          ];
+        default:
+          return [];
+      }
+    };
+
+    const todo = p.days.filter((d) => stepsFor(d).length);
+    const counts = { written: 0, deleted: 0 };
     state = { running: true, done: 0, total: todo.length };
 
     try {
       for (const day of todo) {
         const [y, m, d] = day.date.split("-").map(Number);
-        // Das Backend erlaubt nur eine Änderung pro Speichern, also jeden Eintrag
-        // einzeln absenden (wie die App bei „Enter manually“).
-        const steps =
-          day.action === "fill"
-            ? [
-                () => ctrl.addEntry(SATZA_ARRIVE, new Date(y, m - 1, d, startH, startM)),
-                () => ctrl.addEntry(SATZA_LEAVE, new Date(y, m - 1, d, endH, endM)),
-              ]
-            : [() => model.setProperty(day.path + "/Awart", AWART_PUBLIC_HOLIDAY)];
+        const steps = stepsFor(day, y, m, d);
         for (let i = 0; i < steps.length; i++) {
-          await steps[i]();
           try {
-            await submit(model);
+            await steps[i]();
           } catch (err) {
             model.resetChanges();
             const when = new Date(y, m - 1, d).toLocaleDateString("de-DE");
-            const partial = i > 0 ? " Achtung: Für diesen Tag wurde nur „Arrive“ gespeichert." : "";
+            const partial = i > 0 ? " Achtung: Dieser Tag wurde nur teilweise geändert." : "";
             return { ok: false, done: state.done, error: `Fehler am ${when}: ${errorText(err)}${partial}` };
           }
         }
+        if (day.action === "delete") counts.deleted++;
+        else counts.written++;
         state.done++;
       }
     } finally {
@@ -226,7 +272,10 @@
       model.refresh(true);
     }
 
-    const message = `${p.label}: ${state.done} Tage eingetragen.`;
+    const parts = [];
+    if (counts.written) parts.push(`${counts.written} ${counts.written === 1 ? "Tag" : "Tage"} eingetragen`);
+    if (counts.deleted) parts.push(`${counts.deleted} ${counts.deleted === 1 ? "Tag" : "Tage"} gelöscht`);
+    const message = `${p.label}: ${parts.join(", ") || "nichts geändert"}.`;
     if (window.sap.m && window.sap.m.MessageToast) window.sap.m.MessageToast.show(message);
     return { ok: true, done: state.done, message };
   }

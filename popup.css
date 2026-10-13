@@ -3,9 +3,17 @@
   --fg: #1d1d1f;
   --muted: #6b6b70;
   --border: #d2d2d7;
+  --hover: #f0f0f3;
   --accent: #c50e1f;
   --accent-fg: #ffffff;
   --error: #b3261e;
+  --vacation-bg: #2f6fde;
+  --vacation-fg: #ffffff;
+  --holiday-bg: #fde3e5;
+  --holiday-fg: #a30d1b;
+  --existing-bg: #dcefdc;
+  --existing-fg: #1e5b23;
+  --delete-fg: #b3261e;
   color-scheme: light dark;
 }
 
@@ -15,8 +23,15 @@
     --fg: #f2f2f5;
     --muted: #a1a1a8;
     --border: #3a3a40;
+    --hover: #2c2c31;
     --accent: #e0384a;
     --error: #ff8a80;
+    --vacation-bg: #4a86f0;
+    --holiday-bg: #4a1f24;
+    --holiday-fg: #ffb3ba;
+    --existing-bg: #23402a;
+    --existing-fg: #b5e3ba;
+    --delete-fg: #ff8a80;
   }
 }
 
@@ -86,6 +101,135 @@ h1 {
   font-size: 14px;
 }
 
+/* Kalender */
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  user-select: none;
+  touch-action: none;
+}
+
+.calendar.loading {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.calendar .wd {
+  padding-bottom: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+button.day {
+  cursor: pointer;
+}
+
+.day.fill {
+  border-color: var(--border);
+}
+
+button.day.fill:hover {
+  background: var(--hover);
+}
+
+.day.vacation {
+  background: var(--vacation-bg);
+  color: var(--vacation-fg);
+}
+
+.day.holiday {
+  background: var(--holiday-bg);
+  color: var(--holiday-fg);
+  font-weight: 600;
+}
+
+.day.existing {
+  background: var(--existing-bg);
+  color: var(--existing-fg);
+}
+
+.day.delete {
+  border-color: var(--delete-fg);
+  color: var(--delete-fg);
+  text-decoration: line-through;
+}
+
+.day.off,
+.day.future,
+.day.blocked {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.day.manual {
+  border: 1px dashed var(--border);
+  color: var(--muted);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.swatch.vacation {
+  background: var(--vacation-bg);
+}
+
+.swatch.holiday {
+  background: var(--holiday-bg);
+  border: 1px solid var(--holiday-fg);
+}
+
+.swatch.existing {
+  background: var(--existing-bg);
+  border: 1px solid var(--existing-fg);
+}
+
+.swatch.delete {
+  border: 1px solid var(--delete-fg);
+}
+
+.hint {
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Status und Aktion */
+
 .status {
   min-height: 2.8em;
   margin: 0 0 8px;
@@ -94,20 +238,6 @@ h1 {
 
 .status.error {
   color: var(--error);
-}
-
-details {
-  margin-bottom: 12px;
-  color: var(--muted);
-}
-
-details ul {
-  max-height: 160px;
-  overflow-y: auto;
-  margin: 6px 0 0;
-  padding-left: 0;
-  list-style: none;
-  font-variant-numeric: tabular-nums;
 }
 
 button.primary {
@@ -120,6 +250,10 @@ button.primary {
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+
+button.primary.confirm {
+  background: var(--error);
 }
 
 button:disabled {

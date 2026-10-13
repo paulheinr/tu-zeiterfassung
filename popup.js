@@ -1,16 +1,21 @@
 "use strict";
 
 const DEFAULTS = { start: "09:00", end: "17:23" };
-const ACTION_TEXT = {
+const STATUS_TEXT = {
   fill: "wird eingetragen",
+  vacation: "Urlaub",
   holiday: "wird als Feiertag markiert",
   existing: "schon erfasst",
-  absence: "ganztägiges Ereignis",
+  delete: "wird gelöscht",
   manual: "bitte selbst eintragen",
   future: "in der Zukunft",
+  blocked: "Vormonat noch leer",
+  off: "kein Arbeitstag",
 };
 
 const $ = (id) => document.getElementById(id);
+const pad2 = (n) => String(n).padStart(2, "0");
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const today = new Date();
 let year = today.getFullYear();
 let month = today.getMonth() + 1;
@@ -18,6 +23,20 @@ let tabId = null;
 let frameId = null;
 let planRequest = 0;
 let busy = false;
+
+let basePlan = null; // Ergebnis von plan() ohne Markierungen
+let vacation = new Set(); // markierte Urlaubstage (wird pro Monat gespeichert)
+let toDelete = new Set(); // zum Löschen markierte Tage (bewusst nicht gespeichert)
+let paint = null; // { kind, on, anchor, before } während mit gedrückter Maus gezogen wird
+let notice = null; // { text, error } Ergebnis des letzten Durchlaufs
+let confirmTimer = null;
+
+const vacationKey = () => `vacation:${year}-${pad2(month)}`;
+
+function saveVacation() {
+  if (vacation.size) chrome.storage.local.set({ [vacationKey()]: [...vacation] });
+  else chrome.storage.local.remove(vacationKey());
+}
 
 function setStatus(text, isError = false) {
   $("status").textContent = text;
@@ -27,6 +46,7 @@ function setStatus(text, isError = false) {
 function setBusy(on) {
   busy = on;
   for (const id of ["prev", "next", "start", "end", "fill"]) $(id).disabled = on;
+  $("calendar").classList.toggle("loading", on);
 }
 
 function formatDay(iso) {
@@ -62,11 +82,97 @@ async function callPage(fn, ...args) {
   return hit.result;
 }
 
+// Aktion eines Tages inklusive der Markierungen im Kalender.
+function actionOf(day) {
+  if (day.action === "fill" && vacation.has(day.date)) return "vacation";
+  if (day.action === "existing" && toDelete.has(day.date)) return "delete";
+  return day.action;
+}
+
+// Welche Markierung ein Klick auf diesen Tag setzt.
+function markKind(day) {
+  if (day.action === "fill") return "vacation";
+  if (day.action === "existing") return "delete";
+  return null;
+}
+
+function updateCell(cell, day) {
+  const action = actionOf(day);
+  cell.className = `day ${action}`;
+  cell.title = `${formatDay(day.date)}: ${STATUS_TEXT[action]}${day.note ? ` (${day.note})` : ""}`;
+  cell.setAttribute("aria-pressed", String(action === "vacation" || action === "delete"));
+}
+
+function renderCalendar() {
+  const grid = $("calendar");
+  grid.replaceChildren();
+  for (const wd of ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]) {
+    const head = document.createElement("span");
+    head.className = "wd";
+    head.textContent = wd;
+    grid.append(head);
+  }
+  const offset = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+  for (let i = 0; i < offset; i++) grid.append(document.createElement("span"));
+
+  const byDate = new Map(basePlan.days.map((d) => [d.date, d]));
+  const daysInMonth = new Date(year, month, 0).getDate();
+  for (let n = 1; n <= daysInMonth; n++) {
+    const date = `${year}-${pad2(month)}-${pad2(n)}`;
+    const day = byDate.get(date) || { date, action: "off", note: "" };
+    const cell = document.createElement(markKind(day) ? "button" : "span");
+    cell.textContent = n;
+    if (markKind(day)) {
+      cell.type = "button";
+      cell.dataset.date = date;
+      updateCell(cell, day);
+    } else {
+      cell.className = `day ${day.action}`;
+      cell.title = `${formatDay(date)}: ${STATUS_TEXT[day.action]}${day.note ? ` (${day.note})` : ""}`;
+    }
+    grid.append(cell);
+  }
+}
+
+function disarmConfirm() {
+  clearTimeout(confirmTimer);
+  confirmTimer = null;
+  $("fill").classList.remove("confirm");
+}
+
+function renderSummary() {
+  disarmConfirm();
+  const actions = basePlan.days.map(actionOf);
+  const count = (action) => actions.filter((a) => a === action).length;
+  const fill = count("fill");
+  const vac = count("vacation");
+  const holiday = count("holiday");
+  const del = count("delete");
+
+  const lines = [];
+  if (notice) lines.push(notice.text);
+  if (basePlan.warning) lines.push(basePlan.warning);
+  if (fill) lines.push(`${plural(fill, "Tag", "Tage")} mit ${$("start").value}–${$("end").value} eintragen`);
+  if (vac) lines.push(`${plural(vac, "Tag", "Tage")} Urlaub eintragen`);
+  if (holiday) lines.push(`${plural(holiday, "Feiertag", "Feiertage")} markieren`);
+  if (del) lines.push(`${plural(del, "Tag", "Tage")} löschen`);
+  if (!fill && !vac && !holiday && !del && !notice && !basePlan.warning) {
+    lines.push(`Für ${basePlan.label} ist nichts mehr einzutragen.`);
+  }
+  const manual = basePlan.days.filter((d) => d.action === "manual");
+  if (manual.length) lines.push(`${manual.map((d) => d.note).join(" und ")}: bitte selbst eintragen`);
+  setStatus(lines.join("\n"), Boolean((notice && notice.error) || basePlan.warning));
+
+  const write = fill + vac + holiday;
+  $("fill").textContent = !del ? "Eintragen" : write ? "Eintragen und löschen" : `${plural(del, "Tag", "Tage")} löschen`;
+  $("fill").disabled = busy || write + del === 0;
+}
+
 function renderPlan(p) {
-  const list = $("dayList");
-  list.replaceChildren();
-  $("details").hidden = true;
+  basePlan = null;
+  $("calendarBox").hidden = true;
   $("fill").disabled = true;
+  disarmConfirm();
 
   if (p === null) {
     setStatus("Keine Zeiterfassung gefunden.\nBitte im tuPort „My Time Tracking“ öffnen.");
@@ -76,29 +182,10 @@ function renderPlan(p) {
     setStatus(p.error, true);
     return;
   }
-
-  const count = (action) => p.days.filter((d) => d.action === action).length;
-  const fill = count("fill");
-  const holiday = count("holiday");
-  const lines = [];
-  if (fill) lines.push(`${fill} ${fill === 1 ? "Tag" : "Tage"} mit ${$("start").value}–${$("end").value} eintragen`);
-  if (holiday) lines.push(`${holiday} ${holiday === 1 ? "Feiertag" : "Feiertage"} markieren`);
-  if (!fill && !holiday) lines.push(`Für ${p.label} ist nichts mehr einzutragen.`);
-  const skipped = ["existing", "absence", "future"]
-    .filter((action) => count(action))
-    .map((action) => `${count(action)} ${ACTION_TEXT[action]}`);
-  if (skipped.length) lines.push(`Übersprungen: ${skipped.join(", ")}`);
-  const manual = p.days.filter((d) => d.action === "manual");
-  if (manual.length) lines.push(`${manual.map((d) => d.note).join(" und ")}: bitte selbst eintragen`);
-  setStatus(lines.join("\n"));
-
-  for (const d of p.days) {
-    const li = document.createElement("li");
-    li.textContent = `${formatDay(d.date)}  ${ACTION_TEXT[d.action]}${d.note ? ` (${d.note})` : ""}`;
-    list.append(li);
-  }
-  $("details").hidden = p.days.length === 0;
-  $("fill").disabled = fill + holiday === 0;
+  basePlan = p;
+  renderCalendar();
+  $("calendarBox").hidden = false;
+  renderSummary();
 }
 
 async function refreshPlan() {
@@ -107,41 +194,112 @@ async function refreshPlan() {
     year: "numeric",
   });
   const request = ++planRequest;
+  const key = vacationKey();
   setStatus("Lade …");
   $("fill").disabled = true;
-  let p;
-  try {
-    p = await callPage("plan", year, month, $("start").value, $("end").value);
-  } catch (_) {
-    p = null; // Seite ohne Zugriff, also kein TU-Tab
-  }
-  if (request === planRequest) renderPlan(p);
+  $("calendar").classList.add("loading");
+  const [stored, p] = await Promise.all([
+    chrome.storage.local.get({ [key]: [] }),
+    callPage("plan", year, month, $("start").value, $("end").value).catch(() => null), // kein TU-Tab
+  ]);
+  if (request !== planRequest) return;
+  $("calendar").classList.remove("loading");
+  vacation = new Set(stored[key]);
+  toDelete = new Set();
+  renderPlan(p);
 }
+
+// Kalender: Klicken oder Ziehen setzt bzw. entfernt Markierungen.
+function setMark(cell, kind, on) {
+  const day = basePlan && basePlan.days.find((d) => d.date === cell.dataset.date);
+  if (!day || markKind(day) !== kind) return;
+  const set = kind === "vacation" ? vacation : toDelete;
+  if (on) set.add(day.date);
+  else set.delete(day.date);
+  updateCell(cell, day);
+  renderSummary();
+}
+
+function startMark(cell) {
+  const day = basePlan && basePlan.days.find((d) => d.date === cell.dataset.date);
+  if (!day || busy) return;
+  const kind = markKind(day);
+  const set = kind === "vacation" ? vacation : toDelete;
+  const before = new Set(set);
+  const on = !set.has(day.date);
+  setMark(cell, kind, on);
+  return { kind, on, anchor: day.date, before };
+}
+
+// Beim Ziehen genau die Tage zwischen Start- und aktuellem Tag markieren, alle
+// anderen behalten ihren Zustand vom Beginn des Ziehens. Einzelne Zellen
+// abzuhaken reicht nicht, weil der Browser bei schnellen Bewegungen Zellen überspringt.
+function paintRange(cell) {
+  const [from, to] = [paint.anchor, cell.dataset.date].sort();
+  for (const c of $("calendar").querySelectorAll("button.day")) {
+    const date = c.dataset.date;
+    setMark(c, paint.kind, date >= from && date <= to ? paint.on : paint.before.has(date));
+  }
+}
+
+$("calendar").addEventListener("pointerdown", (e) => {
+  const cell = e.target.closest("button.day");
+  if (!cell || e.button !== 0) return;
+  e.preventDefault();
+  paint = startMark(cell) || null;
+});
+$("calendar").addEventListener("pointerover", (e) => {
+  const cell = paint && e.target.closest("button.day");
+  if (cell) paintRange(cell);
+});
+document.addEventListener("pointerup", () => {
+  if (paint && paint.kind === "vacation") saveVacation();
+  paint = null;
+});
+$("calendar").addEventListener("click", (e) => {
+  // Nur Tastatur (Enter/Leertaste); Mausklicks laufen über pointerdown.
+  const cell = e.target.closest("button.day");
+  if (!cell || e.detail !== 0) return;
+  const mark = startMark(cell);
+  if (mark && mark.kind === "vacation") saveVacation();
+});
 
 async function showProgress() {
   const s = await callPage("status").catch(() => null);
-  if (busy && s && s.running) setStatus(`Trage ein … ${s.done} von ${s.total} Tagen`);
+  if (busy && s && s.running) setStatus(`Bitte warten … ${s.done} von ${s.total} Tagen`);
   return s;
 }
 
-async function fill() {
+async function execute() {
+  // Löschen erst nach einem zweiten Klick ausführen.
+  if (toDelete.size && !confirmTimer) {
+    $("fill").textContent = `Wirklich ${plural(toDelete.size, "Tag", "Tage")} löschen?`;
+    $("fill").classList.add("confirm");
+    confirmTimer = setTimeout(renderSummary, 4000);
+    return;
+  }
+  disarmConfirm();
   setBusy(true);
-  setStatus("Trage ein …");
+  $("fill").textContent = "Läuft …";
+  setStatus("Bitte warten …");
   const poll = setInterval(showProgress, 500);
   let result;
   try {
-    result = await callPage("run", year, month, $("start").value, $("end").value);
+    const marks = { vacation: [...vacation], delete: [...toDelete] };
+    result = await callPage("run", year, month, $("start").value, $("end").value, marks);
   } catch (err) {
     result = { ok: false, error: err.message };
   }
   clearInterval(poll);
-  setBusy(false);
   if (result && result.ok) {
-    setStatus(`✓ ${result.message}`);
-    $("fill").disabled = true;
+    vacation.clear();
+    saveVacation();
+    notice = { text: `✓ ${result.message}`, error: false };
   } else {
-    setStatus((result && result.error) || "Die Zeiterfassung wurde nicht gefunden.", true);
+    notice = { text: (result && result.error) || "Die Zeiterfassung wurde nicht gefunden.", error: true };
   }
+  setBusy(false);
+  await refreshPlan();
 }
 
 // Falls das Popup während des Eintragens geschlossen und wieder geöffnet wurde.
@@ -166,6 +324,7 @@ function shiftMonth(delta) {
     month = 1;
     year++;
   }
+  notice = null;
   refreshPlan();
 }
 
@@ -198,9 +357,10 @@ document.addEventListener("keydown", (e) => {
 for (const id of ["start", "end"]) {
   $(id).addEventListener("change", () => {
     chrome.storage.local.set({ start: $("start").value, end: $("end").value });
+    notice = null;
     refreshPlan();
   });
 }
-$("fill").addEventListener("click", fill);
+$("fill").addEventListener("click", execute);
 
 init();

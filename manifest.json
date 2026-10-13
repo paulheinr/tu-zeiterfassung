@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TU Zeiterfassung – Monat ausfüllen",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Trägt in „My Time Tracking“ der TU Berlin für alle Arbeitstage eines Monats Kommen- und Gehen-Zeiten ein.",
   "permissions": ["scripting", "storage"],
   "host_permissions": ["https://*.sap.tu-berlin.de/*"],
