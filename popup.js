@@ -3,7 +3,7 @@
 const DEFAULTS = { start: "09:00", end: "17:23" };
 const STATUS_TEXT = {
   fill: "wird eingetragen",
-  vacation: "Urlaub",
+  vacation: "Urlaub/Krank",
   holiday: "wird als Feiertag markiert",
   existing: "schon erfasst",
   delete: "wird gelöscht",
@@ -153,7 +153,7 @@ function renderSummary() {
   if (notice) lines.push(notice.text);
   if (basePlan.warning) lines.push(basePlan.warning);
   if (fill) lines.push(`${plural(fill, "Tag", "Tage")} mit ${$("start").value}–${$("end").value} eintragen`);
-  if (vac) lines.push(`${plural(vac, "Tag", "Tage")} Urlaub eintragen`);
+  if (vac) lines.push(`${plural(vac, "Tag", "Tage")} Urlaub/Krank eintragen`);
   if (holiday) lines.push(`${plural(holiday, "Feiertag", "Feiertage")} markieren`);
   if (del) lines.push(`${plural(del, "Tag", "Tage")} löschen`);
   if (!fill && !vac && !holiday && !del && !notice && !basePlan.warning) {
